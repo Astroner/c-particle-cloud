@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <time.h>
+#include <math.h>
 
 #include <SDL2/SDL.h>
 #include <Accelerate/Accelerate.h>
@@ -7,11 +8,11 @@
 #define WIDTH 1280
 #define HEIGHT 720
 
-#define SWARM_SIZE 40000
+#define SWARM_SIZE 20000
 #define UNIT_SIZE 1
 #define SPEED_RATIO 1
 
-#define SECS_TO_MEASURE 60
+#define CLICK_RADIUS 100
 
 struct Swarm {
     float x[SWARM_SIZE];
@@ -25,14 +26,13 @@ struct Swarm {
 #define STR(a) #a
 
 #if !defined(FPS)
-#define FPS 120
+#define FPS 60
 #endif
 
 float msPerFrame = 1000.0f / (float)FPS;
 
 
 void initSwarm() {
-#if defined(BLAS)
     int idist = 1;
     
     int seed[] = { 0, 1, 7, 11 };
@@ -49,27 +49,10 @@ void initSwarm() {
     cblas_sscal(SWARM_SIZE, HEIGHT, Swarm.y, 1);
 
     cblas_sscal(SWARM_SIZE * 2, SPEED_RATIO, Swarm.dx, 1);
-#else
-
-    for(size_t i = 0; i < SWARM_SIZE; i++) {
-        Swarm.x[i] = (float)rand() * WIDTH / (float)RAND_MAX;
-        Swarm.y[i] = (float)rand() * HEIGHT / (float)RAND_MAX;
-
-        Swarm.dx[i] = (float)rand() * 2 * SPEED_RATIO / (float)RAND_MAX - 1;
-        Swarm.dy[i] = (float)rand() * 2 * SPEED_RATIO / (float)RAND_MAX - 1;
-    }
-#endif
 }
 
 void tick() {
-#if defined(BLAS)
     cblas_saxpy(SWARM_SIZE * 2, 1, Swarm.dx, 1, Swarm.x, 1);
-#else
-    for(size_t i = 0; i < SWARM_SIZE; i++) {
-        Swarm.x[i] += Swarm.dx[i];
-        Swarm.y[i] += Swarm.dy[i];
-    }
-#endif
 }
 
 int main(void) {
@@ -88,7 +71,7 @@ int main(void) {
         SDL_WINDOW_OPENGL
     );
 
-    SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
+    SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_PRESENTVSYNC | SDL_RENDERER_ACCELERATED);
     
     void* pixels;
     int pitch;
@@ -98,27 +81,32 @@ int main(void) {
     SDL_UnlockTexture(texture);
 
 
-
     initSwarm();
 
-    float avDrop = 0;
-    float allDrops = 0;
 
-    size_t seconds = 0;
-    size_t drops = 0;
-    size_t frameCounter = 0;
-    float avRatio = 0;
+    int isMouseDown = 0;
+
+    float mouseX = 0;
+    float mouseY = 0;
 
     SDL_Event e;
     int quit = 0;
 
     while(!quit) {
         Uint64 start = SDL_GetPerformanceCounter();
-        frameCounter++;
 
         while(SDL_PollEvent(&e)) {
             if(e.type == SDL_QUIT) {
                 quit = 1;
+            } else if(e.type == SDL_MOUSEBUTTONDOWN) {
+                isMouseDown = 1;
+                mouseX = e.button.x;
+                mouseY = e.button.y;
+            } else if(e.button.type == SDL_MOUSEBUTTONUP) {
+                isMouseDown = 0;
+            } else if(e.type == SDL_MOUSEMOTION && isMouseDown) {
+                mouseX = e.motion.x;
+                mouseY = e.motion.y;
             }
         }
 
@@ -143,6 +131,21 @@ int main(void) {
                 Swarm.dy[i] *= -1;
             }
 
+            if(isMouseDown) {
+                float vx = Swarm.x[i] - mouseX;
+                float vy = Swarm.y[i] - mouseY;
+
+                if(
+                    vx * vx
+                    + vy * vy
+                    <= CLICK_RADIUS * CLICK_RADIUS
+                ) {
+                    float len = sqrtf(vx * vx + vy * vy);
+                    Swarm.dx[i] = ((Swarm.x[i] - mouseX) * 5 / len) * (1.1 - len / CLICK_RADIUS);
+                    Swarm.dy[i] = ((Swarm.y[i] - mouseY) * 5 / len) * (1.1 - len / CLICK_RADIUS);
+                }
+            }
+
             rect.x = Swarm.x[i];
             rect.y = Swarm.y[i];
 
@@ -158,27 +161,8 @@ int main(void) {
 
         if(timeForFrame < msPerFrame) {
             SDL_Delay(msPerFrame - timeForFrame);
-        } else {
-            drops++;  
-            avDrop = (avDrop * allDrops + timeForFrame - msPerFrame) / (allDrops + 1);
-            allDrops++;
-            // printf("NOT "XSTR(FPS)" FPS. ACTUAL: %f\n", 1000.f / timeForFrame);
-        }
-        if(frameCounter % (FPS) == 0) {
-            float ratio = (float)drops/(float)(FPS);
-            printf("DropRatio: %f\n", ratio);
-            drops = 0;
-
-            avRatio = (avRatio * (float)seconds + ratio) / (float)(seconds + 1);
-
-            seconds += 1;
-            if(seconds == SECS_TO_MEASURE) {
-                quit = 1;
-            }
         }
     }
-
-    printf("Average ration: %f, Average Drop: %f\n", avRatio, avDrop);
 
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
