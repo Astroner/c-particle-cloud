@@ -4,15 +4,30 @@
 
 #include <SDL2/SDL.h>
 #include <Accelerate/Accelerate.h>
+#include <OpenCL/opencl.h>
+
+#include "main.h"
 
 #define WIDTH 1280
 #define HEIGHT 720
 
-#define SWARM_SIZE 20000
+#if !defined(SWARM_SIZE)
+    #define SWARM_SIZE 10000
+#endif
 #define UNIT_SIZE 1
 #define SPEED_RATIO 1
 
 #define CLICK_RADIUS 100
+
+float clickRadius = CLICK_RADIUS;
+
+int swarmSize = SWARM_SIZE;
+float minSpeed = 0.5;
+float slowBy = 0.5;
+float width = WIDTH;
+float height = HEIGHT;
+
+const size_t global = SWARM_SIZE;
 
 struct Swarm {
     float x[SWARM_SIZE];
@@ -21,6 +36,9 @@ struct Swarm {
     float dx[SWARM_SIZE];
     float dy[SWARM_SIZE];
 } Swarm;
+
+float outputX[SWARM_SIZE];
+float outputY[SWARM_SIZE];
 
 #define XSTR(a) STR(a)
 #define STR(a) #a
@@ -51,16 +69,112 @@ void initSwarm() {
     cblas_sscal(SWARM_SIZE * 2, SPEED_RATIO, Swarm.dx, 1);
 }
 
-void tick() {
-    cblas_saxpy(SWARM_SIZE * 2, 1, Swarm.dx, 1, Swarm.x, 1);
-}
-
 int main(void) {
     if(SDL_Init(SDL_INIT_VIDEO) < 0) {
         printf("Failed to init SDL\n");
 
         return 1;
     }
+
+    char* src = readFile("shader.cl", NULL);
+
+    cl_device_id device = getDevice();
+
+    CHECK_ASSIGN(
+        "Context creation",
+        cl_context, ctx, 
+        clCreateContext(NULL, 1, &device, NULL, NULL, NULL)
+    );
+
+    CHECK_ASSIGN(
+        "Program creation",
+        cl_program, program,
+        clCreateProgramWithSource(ctx, 1, (const char**)&src, NULL, NULL)
+    );
+
+    CHECK_OPERATION(
+        "Program building",
+        clBuildProgram(program, 1, &device, NULL, NULL, NULL)
+    );
+
+    free(src);
+
+    CHECK_ASSIGN(
+        "Kernel creation",
+        cl_kernel, kernel,
+        clCreateKernel(program, "compute", NULL)
+    );
+
+    CHECK_ASSIGN(
+        "Queue creation",
+        cl_command_queue, queue,
+        clCreateCommandQueue(ctx, device, 0, NULL)
+    );
+
+    CHECK_ASSIGN(
+        "X buffer creation",
+        cl_mem, dataX,
+        clCreateBuffer(ctx, CL_MEM_READ_WRITE, SWARM_SIZE * sizeof(float), NULL, NULL)
+    );
+
+    CHECK_ASSIGN(
+        "Y buffer creation",
+        cl_mem, dataY,
+        clCreateBuffer(ctx, CL_MEM_READ_WRITE, SWARM_SIZE * sizeof(float), NULL, NULL)
+    );
+
+    CHECK_ASSIGN(
+        "dX buffer creation",
+        cl_mem, dataDX,
+        clCreateBuffer(ctx, CL_MEM_READ_WRITE, SWARM_SIZE * sizeof(float), NULL, NULL)
+    );
+
+    CHECK_ASSIGN(
+        "dY buffer creation",
+        cl_mem, dataDY,
+        clCreateBuffer(ctx, CL_MEM_READ_WRITE, SWARM_SIZE * sizeof(float), NULL, NULL)
+    );
+
+    initSwarm();
+
+    CHECK_OPERATION(
+        "Enqueue X buffer init",
+        clEnqueueWriteBuffer(queue, dataX, CL_FALSE, 0, SWARM_SIZE * sizeof(float), Swarm.x, 0, NULL, NULL)
+    );
+
+    CHECK_OPERATION(
+        "Enqueue Y buffer init",
+        clEnqueueWriteBuffer(queue, dataY, CL_FALSE, 0, SWARM_SIZE * sizeof(float), Swarm.y, 0, NULL, NULL)
+    );
+
+    CHECK_OPERATION(
+        "Enqueue dX buffer init",
+        clEnqueueWriteBuffer(queue, dataDX, CL_FALSE, 0, SWARM_SIZE * sizeof(float), Swarm.dx, 0, NULL, NULL)
+    );
+
+    CHECK_OPERATION(
+        "Enqueue dY buffer init",
+        clEnqueueWriteBuffer(queue, dataDY, CL_FALSE, 0, SWARM_SIZE * sizeof(float), Swarm.dy, 0, NULL, NULL)
+    );
+
+    clFinish(queue);
+
+
+    float mouseInitPos = -1;
+    
+    CHECK_OPERATION("set X arg",            clSetKernelArg(kernel, 0, sizeof(dataX), &dataX));
+    CHECK_OPERATION("set Y arg",            clSetKernelArg(kernel, 1, sizeof(dataY), &dataY));
+    CHECK_OPERATION("set dX arg",           clSetKernelArg(kernel, 2, sizeof(dataDX), &dataDX));
+    CHECK_OPERATION("set dY arg",           clSetKernelArg(kernel, 3, sizeof(dataDY), &dataDY));
+    CHECK_OPERATION("set swarm size arg",   clSetKernelArg(kernel, 4, sizeof(swarmSize), &swarmSize));
+    CHECK_OPERATION("set minSpeed arg",     clSetKernelArg(kernel, 5, sizeof(minSpeed), &minSpeed));
+    CHECK_OPERATION("set slowBy arg",       clSetKernelArg(kernel, 6, sizeof(slowBy), &slowBy));
+    CHECK_OPERATION("set width arg",        clSetKernelArg(kernel, 7, sizeof(width), &width));
+    CHECK_OPERATION("set height arg",       clSetKernelArg(kernel, 8, sizeof(height), &height));
+    CHECK_OPERATION("set clickRadius arg",  clSetKernelArg(kernel, 9, sizeof(clickRadius), &clickRadius));
+    CHECK_OPERATION("set mouseX arg",       clSetKernelArg(kernel, 10, sizeof(mouseInitPos), &mouseInitPos));
+    CHECK_OPERATION("set mouseY arg",       clSetKernelArg(kernel, 11, sizeof(mouseInitPos), &mouseInitPos));
+
 
     SDL_Window* window = SDL_CreateWindow(
         "The Swarm",
@@ -80,14 +194,8 @@ int main(void) {
     memset(pixels, 255, pitch * UNIT_SIZE);
     SDL_UnlockTexture(texture);
 
-
-    initSwarm();
-
-
     int isMouseDown = 0;
 
-    float mouseX = 0;
-    float mouseY = 0;
 
     SDL_Event e;
     int quit = 0;
@@ -100,19 +208,40 @@ int main(void) {
                 quit = 1;
             } else if(e.type == SDL_MOUSEBUTTONDOWN) {
                 isMouseDown = 1;
-                mouseX = e.button.x;
-                mouseY = e.button.y;
+                float mouseCoord = e.button.x;
+                clSetKernelArg(kernel, 10, sizeof(float), &mouseCoord);
+                mouseCoord = e.button.y;
+                clSetKernelArg(kernel, 11, sizeof(float), &mouseCoord);
             } else if(e.button.type == SDL_MOUSEBUTTONUP) {
                 isMouseDown = 0;
+                float mouseCoord = -1;
+                clSetKernelArg(kernel, 10, sizeof(float), &mouseCoord);
             } else if(e.type == SDL_MOUSEMOTION && isMouseDown) {
-                mouseX = e.motion.x;
-                mouseY = e.motion.y;
+                float mouseCoord = e.button.x;
+                clSetKernelArg(kernel, 10, sizeof(float), &mouseCoord);
+                mouseCoord = e.button.y;
+                clSetKernelArg(kernel, 11, sizeof(float), &mouseCoord);
             }
         }
 
-        tick();
+        CHECK_OPERATION(
+            "enqueue tick",
+            clEnqueueNDRangeKernel(queue, kernel, 1, NULL, &global, NULL, 0, NULL, NULL)
+        );
 
 
+        CHECK_OPERATION(
+            "enqueue read X data",
+            clEnqueueReadBuffer(queue, dataX, CL_FALSE, 0, sizeof(outputX), outputX, 0, NULL, NULL)
+        );
+
+        CHECK_OPERATION(
+            "enqueue read Y data",
+            clEnqueueReadBuffer(queue, dataY, CL_FALSE, 0, sizeof(outputY), outputY, 0, NULL, NULL)
+        );
+
+        clFinish(queue);
+        
         SDL_SetRenderDrawColor(renderer, 0, 0, 0, 250);
         SDL_RenderClear(renderer);
 
@@ -122,32 +251,8 @@ int main(void) {
         };
 
         for(size_t i = 0; i < SWARM_SIZE; i++) {
-
-            if(Swarm.x[i] <= 0 || Swarm.x[i] >= WIDTH) {
-                Swarm.dx[i] *= -1;
-            }
-
-            if(Swarm.y[i] <= 0 || Swarm.y[i] >= HEIGHT) {
-                Swarm.dy[i] *= -1;
-            }
-
-            if(isMouseDown) {
-                float vx = Swarm.x[i] - mouseX;
-                float vy = Swarm.y[i] - mouseY;
-
-                if(
-                    vx * vx
-                    + vy * vy
-                    <= CLICK_RADIUS * CLICK_RADIUS
-                ) {
-                    float len = sqrtf(vx * vx + vy * vy);
-                    Swarm.dx[i] = ((Swarm.x[i] - mouseX) * 5 / len) * (1.1 - len / CLICK_RADIUS);
-                    Swarm.dy[i] = ((Swarm.y[i] - mouseY) * 5 / len) * (1.1 - len / CLICK_RADIUS);
-                }
-            }
-
-            rect.x = Swarm.x[i];
-            rect.y = Swarm.y[i];
+            rect.x = outputX[i];
+            rect.y = outputY[i];
 
             SDL_RenderCopyF(renderer, texture, NULL, &rect);
         }
@@ -163,6 +268,15 @@ int main(void) {
             SDL_Delay(msPerFrame - timeForFrame);
         }
     }
+
+    clReleaseMemObject(dataX);
+    clReleaseMemObject(dataY);
+    clReleaseMemObject(dataDX);
+    clReleaseMemObject(dataDY);
+    clReleaseKernel(kernel);
+    clReleaseProgram(program);
+    clReleaseCommandQueue(queue);
+    clReleaseContext(ctx);
 
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
