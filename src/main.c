@@ -12,7 +12,7 @@
 #define HEIGHT 720
 
 #if !defined(SWARM_SIZE)
-    #define SWARM_SIZE 10000
+    #define SWARM_SIZE 20000
 #endif
 #define UNIT_SIZE 1
 #define SPEED_RATIO 1
@@ -22,8 +22,6 @@
 float clickRadius = CLICK_RADIUS;
 
 int swarmSize = SWARM_SIZE;
-float minSpeed = 0.5;
-float slowBy = 0.5;
 float width = WIDTH;
 float height = HEIGHT;
 
@@ -167,13 +165,11 @@ int main(void) {
     CHECK_OPERATION("set dX arg",           clSetKernelArg(kernel, 2, sizeof(dataDX), &dataDX));
     CHECK_OPERATION("set dY arg",           clSetKernelArg(kernel, 3, sizeof(dataDY), &dataDY));
     CHECK_OPERATION("set swarm size arg",   clSetKernelArg(kernel, 4, sizeof(swarmSize), &swarmSize));
-    CHECK_OPERATION("set minSpeed arg",     clSetKernelArg(kernel, 5, sizeof(minSpeed), &minSpeed));
-    CHECK_OPERATION("set slowBy arg",       clSetKernelArg(kernel, 6, sizeof(slowBy), &slowBy));
-    CHECK_OPERATION("set width arg",        clSetKernelArg(kernel, 7, sizeof(width), &width));
-    CHECK_OPERATION("set height arg",       clSetKernelArg(kernel, 8, sizeof(height), &height));
-    CHECK_OPERATION("set clickRadius arg",  clSetKernelArg(kernel, 9, sizeof(clickRadius), &clickRadius));
-    CHECK_OPERATION("set mouseX arg",       clSetKernelArg(kernel, 10, sizeof(mouseInitPos), &mouseInitPos));
-    CHECK_OPERATION("set mouseY arg",       clSetKernelArg(kernel, 11, sizeof(mouseInitPos), &mouseInitPos));
+    CHECK_OPERATION("set width arg",        clSetKernelArg(kernel, 5, sizeof(width), &width));
+    CHECK_OPERATION("set height arg",       clSetKernelArg(kernel, 6, sizeof(height), &height));
+    CHECK_OPERATION("set clickRadius arg",  clSetKernelArg(kernel, 7, sizeof(clickRadius), &clickRadius));
+    CHECK_OPERATION("set mouseX arg",       clSetKernelArg(kernel, 8, sizeof(mouseInitPos), &mouseInitPos));
+    CHECK_OPERATION("set mouseY arg",       clSetKernelArg(kernel, 9, sizeof(mouseInitPos), &mouseInitPos));
 
 
     SDL_Window* window = SDL_CreateWindow(
@@ -209,18 +205,18 @@ int main(void) {
             } else if(e.type == SDL_MOUSEBUTTONDOWN) {
                 isMouseDown = 1;
                 float mouseCoord = e.button.x;
-                clSetKernelArg(kernel, 10, sizeof(float), &mouseCoord);
+                clSetKernelArg(kernel, 8, sizeof(float), &mouseCoord);
                 mouseCoord = e.button.y;
-                clSetKernelArg(kernel, 11, sizeof(float), &mouseCoord);
+                clSetKernelArg(kernel, 9, sizeof(float), &mouseCoord);
             } else if(e.button.type == SDL_MOUSEBUTTONUP) {
                 isMouseDown = 0;
                 float mouseCoord = -1;
-                clSetKernelArg(kernel, 10, sizeof(float), &mouseCoord);
+                clSetKernelArg(kernel, 8, sizeof(float), &mouseCoord);
             } else if(e.type == SDL_MOUSEMOTION && isMouseDown) {
                 float mouseCoord = e.button.x;
-                clSetKernelArg(kernel, 10, sizeof(float), &mouseCoord);
+                clSetKernelArg(kernel, 8, sizeof(float), &mouseCoord);
                 mouseCoord = e.button.y;
-                clSetKernelArg(kernel, 11, sizeof(float), &mouseCoord);
+                clSetKernelArg(kernel, 9, sizeof(float), &mouseCoord);
             }
         }
 

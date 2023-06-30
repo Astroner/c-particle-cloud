@@ -6,8 +6,6 @@ __kernel void compute(
     __global float* dx,
     __global float* dy,
     int count,
-    float minSpeed,
-    float slowBy,
     float width,
     float height,
     float clickRadius,
@@ -28,24 +26,6 @@ __kernel void compute(
 
     x[id] += dx[id];
     y[id] += dy[id];
-
-    if(dx[id] > minSpeed) {
-        float diff = dx[id] - minSpeed;
-        if(diff < slowBy) {
-            dx[id] -= diff;
-        } else {
-            dx[id] -= slowBy;
-        }
-    }
-
-    if(dy[id] > minSpeed) {
-        float diff = dy[id] - minSpeed;
-        if(diff < slowBy) {
-            dy[id] -= diff;
-        } else {
-            dy[id] -= slowBy;
-        }
-    }
 
     if(mouseX >= 0) {
         float vx = x[id] - mouseX;
