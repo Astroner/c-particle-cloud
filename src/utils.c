@@ -41,9 +41,9 @@ cl_device_id getDevice() {
     for(size_t i = 0; i < devicesNumber; i++) {
         cl_uint ratio = 1;
         cl_uint deviceParam;
-        clGetDeviceInfo(device, CL_DEVICE_MAX_COMPUTE_UNITS, sizeof(deviceParam), &deviceParam, NULL);
+        clGetDeviceInfo(devices[i], CL_DEVICE_MAX_COMPUTE_UNITS, sizeof(deviceParam), &deviceParam, NULL);
         ratio *= deviceParam;
-        clGetDeviceInfo(device, CL_DEVICE_MAX_CLOCK_FREQUENCY, sizeof(deviceParam), &deviceParam, NULL);
+        clGetDeviceInfo(devices[i], CL_DEVICE_MAX_CLOCK_FREQUENCY, sizeof(deviceParam), &deviceParam, NULL);
         ratio *= deviceParam;
 
         if(ratio > deviceScore) {
