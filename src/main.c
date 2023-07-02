@@ -5,6 +5,7 @@
 #include <SDL2/SDL.h>
 #include <Accelerate/Accelerate.h>
 #include <OpenCL/opencl.h>
+#include <OpenGL/gl.h>
 
 #include "main.h"
 
@@ -12,7 +13,7 @@
 #define HEIGHT 720
 
 #if !defined(SWARM_SIZE)
-    #define SWARM_SIZE 20000
+    #define SWARM_SIZE 50000
 #endif
 #define UNIT_SIZE 1
 #define SPEED_RATIO 1
@@ -42,7 +43,7 @@ float outputY[SWARM_SIZE];
 #define STR(a) #a
 
 #if !defined(FPS)
-#define FPS 60
+#define FPS 120
 #endif
 
 float msPerFrame = 1000.0f / (float)FPS;
@@ -67,12 +68,17 @@ void initSwarm() {
     cblas_sscal(SWARM_SIZE * 2, SPEED_RATIO, Swarm.dx, 1);
 }
 
+GLushort elements[SWARM_SIZE];
+
 int main(void) {
     if(SDL_Init(SDL_INIT_VIDEO) < 0) {
         printf("Failed to init SDL\n");
 
         return 1;
     }
+    SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+    SDL_GL_SetAttribute(SDL_GL_ACCELERATED_VISUAL, 1);
+
 
     char* src = readFile("shader.cl", NULL);
 
@@ -181,14 +187,24 @@ int main(void) {
         SDL_WINDOW_OPENGL
     );
 
-    SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_PRESENTVSYNC | SDL_RENDERER_ACCELERATED);
-    
-    void* pixels;
-    int pitch;
-    SDL_Texture* texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STREAMING, UNIT_SIZE, UNIT_SIZE);
-    SDL_LockTexture(texture, NULL, &pixels, &pitch);
-    memset(pixels, 255, pitch * UNIT_SIZE);
-    SDL_UnlockTexture(texture);
+    SDL_GLContext glCtx = SDL_GL_CreateContext(window);
+
+    GLuint vertex = createShader(GL_VERTEX_SHADER, "vertex.glsl");
+    GLuint fragment = createShader(GL_FRAGMENT_SHADER, "fragment.glsl");
+    GLuint particles = createProgram(vertex, fragment);
+
+    GLint positionXAttr = glGetAttribLocation(particles, "posX");
+    GLint positionYAttr = glGetAttribLocation(particles, "posY");
+
+    GLuint glBuffers[3];
+    glGenBuffers(sizeof(glBuffers) / sizeof(glBuffers[0]), glBuffers);
+
+    for(size_t i = 0; i < SWARM_SIZE; i++)
+        elements[i] = (GLushort)i;
+
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, glBuffers[2]);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(elements), elements, GL_STATIC_DRAW);
+
 
     int isMouseDown = 0;
 
@@ -237,23 +253,68 @@ int main(void) {
         );
 
         clFinish(queue);
+
+        glClearColor(0.f, 0.f, 0.f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        glUseProgram(particles);
+
         
-        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 250);
-        SDL_RenderClear(renderer);
+        glBindBuffer(GL_ARRAY_BUFFER, glBuffers[0]);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(outputX), outputX, GL_DYNAMIC_DRAW);
+        glVertexAttribPointer(
+            positionXAttr,
+            1,
+            GL_FLOAT,
+            GL_FALSE,
+            0,
+            NULL
+        );
+        glEnableVertexAttribArray(positionXAttr);
 
-        SDL_FRect rect = {
-            .h = UNIT_SIZE,
-            .w = UNIT_SIZE
-        };
 
-        for(size_t i = 0; i < SWARM_SIZE; i++) {
-            rect.x = outputX[i];
-            rect.y = outputY[i];
+        glBindBuffer(GL_ARRAY_BUFFER, glBuffers[1]);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(outputY), outputY, GL_DYNAMIC_DRAW);
+        glVertexAttribPointer(
+            positionYAttr,
+            1,
+            GL_FLOAT,
+            GL_FALSE,
+            0,
+            NULL
+        );
+        glEnableVertexAttribArray(positionYAttr);
 
-            SDL_RenderCopyF(renderer, texture, NULL, &rect);
-        }
 
-        SDL_RenderPresent(renderer);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, glBuffers[2]);
+        glDrawElements(
+            GL_POINTS,
+            SWARM_SIZE,
+            GL_UNSIGNED_SHORT, 
+            NULL
+        );
+
+        glDisableVertexAttribArray(positionXAttr);
+        glDisableVertexAttribArray(positionYAttr);
+
+        SDL_GL_SwapWindow(window);
+
+        // SDL_SetRenderDrawColor(renderer, 0, 0, 0, 250);
+        // SDL_RenderClear(renderer);
+
+        // SDL_FRect rect = {
+        //     .h = UNIT_SIZE,
+        //     .w = UNIT_SIZE
+        // };
+
+        // for(size_t i = 0; i < SWARM_SIZE; i++) {
+        //     rect.x = outputX[i];
+        //     rect.y = outputY[i];
+
+        //     SDL_RenderCopyF(renderer, texture, NULL, &rect);
+        // }
+
+        // SDL_RenderPresent(renderer);
 
 
         Uint64 end = SDL_GetPerformanceCounter();
@@ -274,7 +335,13 @@ int main(void) {
     clReleaseCommandQueue(queue);
     clReleaseContext(ctx);
 
-    SDL_DestroyRenderer(renderer);
+
+    glDeleteBuffers(sizeof(glBuffers) / sizeof(glBuffers[0]), glBuffers);
+
+
+
+    SDL_GL_DeleteContext(glCtx);
+    // SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
     SDL_Quit();
     return 0;

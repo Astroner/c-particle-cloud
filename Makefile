@@ -3,7 +3,7 @@ CC=gcc-12
 SOURCES=$(wildcard ./src/*.c ./src/**/*.c)
 OBJECTS=$(SOURCES:.c=.o)
 
-FRAMEWORKS=-F/Library/Frameworks -framework SDL2 -framework Accelerate -framework OpenCL
+FRAMEWORKS=-F/Library/Frameworks -framework SDL2 -framework Accelerate -framework OpenCL -framework OpenGL
 
 EXECUTABLE=./swarm
 
