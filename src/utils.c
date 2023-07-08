@@ -29,31 +29,6 @@ char* readFile(char* path, size_t* strLength) {
     return result;
 }
 
-cl_device_id getDevice() {
-    cl_device_id devices[3];
-    cl_uint devicesNumber;
-
-    clGetDeviceIDs(NULL, CL_DEVICE_TYPE_GPU, 3, devices, &devicesNumber);
-    
-    cl_device_id device;
-    cl_uint deviceScore = 0;
-
-    for(size_t i = 0; i < devicesNumber; i++) {
-        cl_uint ratio = 1;
-        cl_uint deviceParam;
-        clGetDeviceInfo(devices[i], CL_DEVICE_MAX_COMPUTE_UNITS, sizeof(deviceParam), &deviceParam, NULL);
-        ratio *= deviceParam;
-        clGetDeviceInfo(devices[i], CL_DEVICE_MAX_CLOCK_FREQUENCY, sizeof(deviceParam), &deviceParam, NULL);
-        ratio *= deviceParam;
-
-        if(ratio > deviceScore) {
-            device = devices[i];
-        }
-    }
-
-    return device;
-}
-
 GLuint createShader(GLenum type, char* fileSrc) {
     char* src = readFile(fileSrc, NULL);
 

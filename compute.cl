@@ -1,44 +1,32 @@
 
 
 __kernel void compute(
-    __global float* x,
-    __global float* y,
-    __global float* dx,
-    __global float* dy,
+    __global float2* pos,
+    __global float2* speed,
     int count,
-    float width,
-    float height,
+    float2 window,
     float clickRadius,
-    float mouseX, 
-    float mouseY
+    float2 mouse
 ) {
     int id = get_global_id(0);
 
     if(id < 0 || id >= count) return;
-    
-    if(x[id] <= 0 || x[id] >= width) {
-        dx[id] *= -1;
+
+    if(pos[id].x <= 0 || pos[id].x >= window.x) {
+        speed[id].x *= -1.f;
     }
 
-    if(y[id] <= 0 || y[id] >= height) {
-        dy[id] *= -1;
+    if(pos[id].y <= 0 || pos[id].y >= window.y) {
+        speed[id].y *= -1.f;
     }
 
-    x[id] += dx[id];
-    y[id] += dy[id];
+    pos[id] += speed[id];
 
-    if(mouseX >= 0) {
-        float vx = x[id] - mouseX;
-        float vy = y[id] - mouseY;
+    if(mouse.x >= 0) {
+        float distance = length(pos[id] - mouse);
 
-        if(
-            vx * vx
-            + vy * vy
-            <= clickRadius * clickRadius
-        ) {
-            float len = sqrt(vx * vx + vy * vy);
-            dx[id] = ((x[id] - mouseX) * 5 / len) * (1.3 - len / clickRadius);
-            dy[id] = ((y[id] - mouseY) * 5 / len) * (1.3 - len / clickRadius);
+        if(distance < clickRadius) {
+            speed[id] = ((pos[id] - mouse) * 5.0f / distance) * (1.3f - distance / clickRadius);
         }
     }
 }

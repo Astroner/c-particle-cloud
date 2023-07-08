@@ -26,18 +26,15 @@
 float clickRadius = CLICK_RADIUS;
 
 int swarmSize = SWARM_SIZE;
-float width = WIDTH;
-float height = HEIGHT;
-
+GLushort elements[SWARM_SIZE];
+float windowSize[2] = { WIDTH, HEIGHT };
 const size_t global = SWARM_SIZE;
 
 struct Swarm {
-    float x[SWARM_SIZE];
-    float y[SWARM_SIZE];
-
-    float dx[SWARM_SIZE];
-    float dy[SWARM_SIZE];
+    float pos[SWARM_SIZE * 2];
+    float speed[SWARM_SIZE * 2];
 } Swarm;
+
 
 #define XSTR(a) STR(a)
 #define STR(a) #a
@@ -50,25 +47,22 @@ float msPerFrame = 1000.0f / (float)FPS;
 
 
 void initSwarm() {
-    int idist = 1;
-    
-    int seed[] = { 0, 1, 7, 11 };
-
+    // Randomize swarm positions and speed
+   
+    int idist = 1; // result type. "1" means range from 0 to 1 while "2" means range from -1 to 1
+    int seed[] = { 0, 1, 7, 11 }; // random seed
     int size = SWARM_SIZE * 2;
-
-    slarnv_(&idist, seed, &size, Swarm.x);
-
+    slarnv_(&idist, seed, &size, Swarm.pos); // LAPACK random vector function
 
     idist = 2;
-    slarnv_(&idist, seed, &size, Swarm.dx);
+    slarnv_(&idist, seed, &size, Swarm.speed);
 
-    cblas_sscal(SWARM_SIZE, WIDTH, Swarm.x, 1);
-    cblas_sscal(SWARM_SIZE, HEIGHT, Swarm.y, 1);
 
-    cblas_sscal(SWARM_SIZE * 2, SPEED_RATIO, Swarm.dx, 1);
+    cblas_sscal(SWARM_SIZE, WIDTH, Swarm.pos, 2); // BLAS multiply vector by scalar
+    cblas_sscal(SWARM_SIZE, HEIGHT, Swarm.pos + 1, 2);
+
+    cblas_sscal(SWARM_SIZE * 2, SPEED_RATIO, Swarm.speed, 1); 
 }
-
-GLushort elements[SWARM_SIZE];
 
 int main(void) {
 
@@ -97,22 +91,19 @@ int main(void) {
     GLuint fragment = createShader(GL_FRAGMENT_SHADER, "fragment.glsl");
     GLuint particles = createProgram(vertex, fragment);
 
-    GLint positionXAttr = glGetAttribLocation(particles, "posX");
-    GLint positionYAttr = glGetAttribLocation(particles, "posY");
+    GLint positionAttr = glGetAttribLocation(particles, "pos");
+    GLint windowUniform = glGetUniformLocation(particles, "window");
 
-    GLuint glBuffers[3];
+    GLuint glBuffers[2];
     glGenBuffers(sizeof(glBuffers) / sizeof(glBuffers[0]), glBuffers);
 
     glBindBuffer(GL_ARRAY_BUFFER, glBuffers[0]);
-    glBufferData(GL_ARRAY_BUFFER, SWARM_SIZE * sizeof(GLfloat), NULL, GL_DYNAMIC_DRAW);
-
-    glBindBuffer(GL_ARRAY_BUFFER, glBuffers[1]);
-    glBufferData(GL_ARRAY_BUFFER, SWARM_SIZE * sizeof(GLfloat), NULL, GL_DYNAMIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER, SWARM_SIZE * sizeof(GLfloat) * 2, NULL, GL_DYNAMIC_DRAW);
 
     for(size_t i = 0; i < SWARM_SIZE; i++)
         elements[i] = (GLushort)i;
 
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, glBuffers[2]);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, glBuffers[1]);
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(elements), elements, GL_STATIC_DRAW);
 
 
@@ -126,128 +117,47 @@ int main(void) {
         0
     };
 
-    char* src = readFile("compute.cl", NULL);
 
-    CHECK_ASSIGN(
-        "Context creation",
-        cl_context, ctx, 
-        clCreateContext(properties, 0, NULL, NULL, NULL, NULL)
-    );
+    cl_context ctx = clCreateContext(properties, 0, NULL, NULL, NULL, NULL);
 
     cl_device_id device;
     clGetContextInfo(ctx, CL_CONTEXT_DEVICES, sizeof(device), &device, NULL);
 
+    cl_command_queue queue = clCreateCommandQueue(ctx, device, 0, NULL);
 
-    CHECK_ASSIGN(
-        "Program creation",
-        cl_program, program,
-        clCreateProgramWithSource(ctx, 1, (const char**)&src, NULL, NULL)
-    );
-
-    CHECK_OPERATION(
-        "Program building",
-        clBuildProgram(program, 1, &device, NULL, NULL, NULL)
-    );
-
+    char* src = readFile("compute.cl", NULL);
+    cl_program program = clCreateProgramWithSource(ctx, 1, (const char**)&src, NULL, NULL);
+    clBuildProgram(program, 1, &device, NULL, NULL, NULL);
     free(src);
 
-    CHECK_ASSIGN(
-        "Kernel creation",
-        cl_kernel, kernel,
-        clCreateKernel(program, "compute", NULL)
-    );
 
-    CHECK_ASSIGN(
-        "Queue creation",
-        cl_command_queue, queue,
-        clCreateCommandQueue(ctx, device, 0, NULL)
-    );
+    cl_kernel kernel = clCreateKernel(program, "compute", NULL);
 
-    CHECK_ASSIGN(
-        "X buffer creation",
-        cl_mem, dataX,
-        clCreateFromGLBuffer(ctx, CL_MEM_READ_WRITE, glBuffers[0], NULL)
-    );
-
-    CHECK_ASSIGN(
-        "Y buffer creation",
-        cl_mem, dataY,
-        clCreateFromGLBuffer(ctx, CL_MEM_READ_WRITE, glBuffers[1], NULL)
-    );
-
-    CHECK_ASSIGN(
-        "dX buffer creation",
-        cl_mem, dataDX,
-        clCreateBuffer(ctx, CL_MEM_READ_WRITE, SWARM_SIZE * sizeof(float), NULL, NULL)
-    );
-
-    CHECK_ASSIGN(
-        "dY buffer creation",
-        cl_mem, dataDY,
-        clCreateBuffer(ctx, CL_MEM_READ_WRITE, SWARM_SIZE * sizeof(float), NULL, NULL)
-    );
+    cl_mem dataPos = clCreateFromGLBuffer(ctx, CL_MEM_READ_WRITE, glBuffers[0], NULL);
+    cl_mem dataSpeed = clCreateBuffer(ctx, CL_MEM_READ_WRITE, SWARM_SIZE * sizeof(float) * 2, NULL, NULL);
 
     initSwarm();
 
-    CHECK_OPERATION(
-        "Enqueue X buffer acquire",
-        clEnqueueAcquireGLObjects(queue, 1, &dataX, 0, NULL, NULL)
-    );
+    clEnqueueAcquireGLObjects(queue, 1, &dataPos, 0, NULL, NULL);
+    clEnqueueWriteBuffer(queue, dataPos, CL_FALSE, 0, sizeof(Swarm.pos), Swarm.pos, 0, NULL, NULL);
+    clEnqueueReleaseGLObjects(queue, 1, &dataPos, 0, NULL, NULL);
 
-    CHECK_OPERATION(
-        "Enqueue Y buffer acquire",
-        clEnqueueAcquireGLObjects(queue, 1, &dataY, 0, NULL, NULL)
-    );
-
-    CHECK_OPERATION(
-        "Enqueue X buffer init",
-        clEnqueueWriteBuffer(queue, dataX, CL_FALSE, 0, SWARM_SIZE * sizeof(float), Swarm.x, 0, NULL, NULL)
-    );
-
-    CHECK_OPERATION(
-        "Enqueue Y buffer init",
-        clEnqueueWriteBuffer(queue, dataY, CL_FALSE, 0, SWARM_SIZE * sizeof(float), Swarm.y, 0, NULL, NULL)
-    );
-
-    CHECK_OPERATION(
-        "Enqueue X buffer acquire",
-        clEnqueueReleaseGLObjects(queue, 1, &dataX, 0, NULL, NULL)
-    );
-
-    CHECK_OPERATION(
-        "Enqueue Y buffer acquire",
-        clEnqueueReleaseGLObjects(queue, 1, &dataY, 0, NULL, NULL)
-    );
-
-    CHECK_OPERATION(
-        "Enqueue dX buffer init",
-        clEnqueueWriteBuffer(queue, dataDX, CL_FALSE, 0, SWARM_SIZE * sizeof(float), Swarm.dx, 0, NULL, NULL)
-    );
-
-    CHECK_OPERATION(
-        "Enqueue dY buffer init",
-        clEnqueueWriteBuffer(queue, dataDY, CL_FALSE, 0, SWARM_SIZE * sizeof(float), Swarm.dy, 0, NULL, NULL)
-    );
-
+    clEnqueueWriteBuffer(queue, dataSpeed, CL_FALSE, 0, sizeof(Swarm.speed), Swarm.speed, 0, NULL, NULL);
     clFinish(queue);
 
 
-    float mouseInitPos = -1;
+
+    float mousePosition[2] = { -1, -1 };
     
-    CHECK_OPERATION("set X arg",            clSetKernelArg(kernel, 0, sizeof(dataX), &dataX));
-    CHECK_OPERATION("set Y arg",            clSetKernelArg(kernel, 1, sizeof(dataY), &dataY));
-    CHECK_OPERATION("set dX arg",           clSetKernelArg(kernel, 2, sizeof(dataDX), &dataDX));
-    CHECK_OPERATION("set dY arg",           clSetKernelArg(kernel, 3, sizeof(dataDY), &dataDY));
-    CHECK_OPERATION("set swarm size arg",   clSetKernelArg(kernel, 4, sizeof(swarmSize), &swarmSize));
-    CHECK_OPERATION("set width arg",        clSetKernelArg(kernel, 5, sizeof(width), &width));
-    CHECK_OPERATION("set height arg",       clSetKernelArg(kernel, 6, sizeof(height), &height));
-    CHECK_OPERATION("set clickRadius arg",  clSetKernelArg(kernel, 7, sizeof(clickRadius), &clickRadius));
-    CHECK_OPERATION("set mouseX arg",       clSetKernelArg(kernel, 8, sizeof(mouseInitPos), &mouseInitPos));
-    CHECK_OPERATION("set mouseY arg",       clSetKernelArg(kernel, 9, sizeof(mouseInitPos), &mouseInitPos));
+    clSetKernelArg(kernel, 0, sizeof(dataPos), &dataPos);
+    clSetKernelArg(kernel, 1, sizeof(dataSpeed), &dataSpeed);
+    clSetKernelArg(kernel, 2, sizeof(swarmSize), &swarmSize);
+    clSetKernelArg(kernel, 3, sizeof(windowSize), &windowSize);
+    clSetKernelArg(kernel, 4, sizeof(clickRadius), &clickRadius);
+    clSetKernelArg(kernel, 5, sizeof(mousePosition), &mousePosition);
 
 
-
-
+    // Main loop
     int isMouseDown = 0;
 
 
@@ -258,51 +168,39 @@ int main(void) {
         Uint64 start = SDL_GetPerformanceCounter();
 
         while(SDL_PollEvent(&e)) {
-            if(e.type == SDL_QUIT) {
-                quit = 1;
-            } else if(e.type == SDL_MOUSEBUTTONDOWN) {
-                isMouseDown = 1;
-                float mouseCoord = e.button.x;
-                clSetKernelArg(kernel, 8, sizeof(float), &mouseCoord);
-                mouseCoord = e.button.y;
-                clSetKernelArg(kernel, 9, sizeof(float), &mouseCoord);
-            } else if(e.button.type == SDL_MOUSEBUTTONUP) {
-                isMouseDown = 0;
-                float mouseCoord = -1;
-                clSetKernelArg(kernel, 8, sizeof(float), &mouseCoord);
-            } else if(e.type == SDL_MOUSEMOTION && isMouseDown) {
-                float mouseCoord = e.button.x;
-                clSetKernelArg(kernel, 8, sizeof(float), &mouseCoord);
-                mouseCoord = e.button.y;
-                clSetKernelArg(kernel, 9, sizeof(float), &mouseCoord);
+            switch(e.type) {
+                case SDL_QUIT:
+                    quit = 1;
+                    break;
+
+                case SDL_MOUSEBUTTONDOWN:
+                    isMouseDown = 1;
+                    mousePosition[0] = e.button.x;
+                    mousePosition[1] = e.button.y;
+
+                    clSetKernelArg(kernel, 5, sizeof(mousePosition), &mousePosition);
+                    break;
+
+                case SDL_MOUSEBUTTONUP:
+                    isMouseDown = 0;
+                    mousePosition[0] = -1;
+                    clSetKernelArg(kernel, 5, sizeof(float), &mousePosition);
+                    break;
+
+                case SDL_MOUSEMOTION:
+                    if(!isMouseDown) break;
+
+                    mousePosition[0] = e.button.x;
+                    mousePosition[1] = e.button.y;
+
+                    clSetKernelArg(kernel, 5, sizeof(mousePosition), &mousePosition);
+                    break;
             }
         }
 
-        CHECK_OPERATION(
-            "Enqueue X buffer acquire in loop",
-            clEnqueueAcquireGLObjects(queue, 1, &dataX, 0, NULL, NULL)
-        );
-
-        CHECK_OPERATION(
-            "Enqueue Y buffer acquire in loop",
-            clEnqueueAcquireGLObjects(queue, 1, &dataY, 0, NULL, NULL)
-        );
-
-        CHECK_OPERATION(
-            "enqueue tick",
-            clEnqueueNDRangeKernel(queue, kernel, 1, NULL, &global, NULL, 0, NULL, NULL)
-        );
-
-        CHECK_OPERATION(
-            "Enqueue X buffer acquire",
-            clEnqueueReleaseGLObjects(queue, 1, &dataX, 0, NULL, NULL)
-        );
-
-        CHECK_OPERATION(
-            "Enqueue Y buffer acquire",
-            clEnqueueReleaseGLObjects(queue, 1, &dataY, 0, NULL, NULL)
-        );
-
+        clEnqueueAcquireGLObjects(queue, 1, &dataPos, 0, NULL, NULL);
+        clEnqueueNDRangeKernel(queue, kernel, 1, NULL, &global, NULL, 0, NULL, NULL);
+        clEnqueueReleaseGLObjects(queue, 1, &dataPos, 0, NULL, NULL);
         clFinish(queue);
 
         glClearColor(0.f, 0.f, 0.f, 1.0f);
@@ -310,32 +208,21 @@ int main(void) {
 
         glUseProgram(particles);
 
+        glUniform2f(windowUniform, WIDTH, HEIGHT);
         
         glBindBuffer(GL_ARRAY_BUFFER, glBuffers[0]);
         glVertexAttribPointer(
-            positionXAttr,
-            1,
+            positionAttr,
+            2,
             GL_FLOAT,
             GL_FALSE,
             0,
             NULL
         );
-        glEnableVertexAttribArray(positionXAttr);
+        glEnableVertexAttribArray(positionAttr);
 
 
-        glBindBuffer(GL_ARRAY_BUFFER, glBuffers[1]);
-        glVertexAttribPointer(
-            positionYAttr,
-            1,
-            GL_FLOAT,
-            GL_FALSE,
-            0,
-            NULL
-        );
-        glEnableVertexAttribArray(positionYAttr);
-
-
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, glBuffers[2]);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, glBuffers[1]);
         glDrawElements(
             GL_POINTS,
             SWARM_SIZE,
@@ -343,8 +230,7 @@ int main(void) {
             NULL
         );
 
-        glDisableVertexAttribArray(positionXAttr);
-        glDisableVertexAttribArray(positionYAttr);
+        glDisableVertexAttribArray(positionAttr);
 
         SDL_GL_SwapWindow(window);
 
@@ -357,10 +243,8 @@ int main(void) {
         }
     }
 
-    clReleaseMemObject(dataX);
-    clReleaseMemObject(dataY);
-    clReleaseMemObject(dataDX);
-    clReleaseMemObject(dataDY);
+    clReleaseMemObject(dataPos);
+    clReleaseMemObject(dataSpeed);
     clReleaseKernel(kernel);
     clReleaseProgram(program);
     clReleaseCommandQueue(queue);

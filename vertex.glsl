@@ -1,6 +1,9 @@
-attribute float posX;
-attribute float posY;
+attribute vec2 pos;
+
+uniform vec2 window;
 
 void main() {
-    gl_Position = vec4(posX * 2.0 / 1280.0 - 1.0, (posY * 2.0 / 720.0 - 1.0) * -1.0, 1.0, 1.0);
+    vec2 normalizedPosition = ((pos * 2.0 / window) - 1.0) * vec2(1.0, -1.0);
+
+    gl_Position = vec4(normalizedPosition, 1.0, 1.0);
 }
