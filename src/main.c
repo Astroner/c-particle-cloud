@@ -1,14 +1,14 @@
 #include <stdio.h>
-#include <time.h>
-#include <math.h>
+
+#include <Accelerate/Accelerate.h>
 
 #include <SDL2/SDL.h>
-#include <Accelerate/Accelerate.h>
 #include <OpenGL/CGLDevice.h>
 #include <OpenGL/CGLCurrent.h>
+#include <OpenGL/gl.h>
+
 #include <OpenCL/opencl.h>
 #include <OpenCL/cl_gl_ext.h>
-#include <OpenGL/gl.h>
 
 #include "main.h"
 
