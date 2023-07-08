@@ -16,18 +16,18 @@
 #define HEIGHT 720
 
 #if !defined(SWARM_SIZE)
-    #define SWARM_SIZE 50000
+    #define SWARM_SIZE 500000
 #endif
 #define UNIT_SIZE 1
-#define SPEED_RATIO 1
+#define SPEED_RATIO 0.001
 
 #define CLICK_RADIUS 100
 
-float clickRadius = CLICK_RADIUS;
+float clickRadius = (float)CLICK_RADIUS / (float)WIDTH;
 
 int swarmSize = SWARM_SIZE;
 GLushort elements[SWARM_SIZE];
-float windowSize[2] = { WIDTH, HEIGHT };
+float ratio = (float)WIDTH / (float)HEIGHT;
 const size_t global = SWARM_SIZE;
 
 struct Swarm {
@@ -49,19 +49,12 @@ float msPerFrame = 1000.0f / (float)FPS;
 void initSwarm() {
     // Randomize swarm positions and speed
    
-    int idist = 1; // result type. "1" means range from 0 to 1 while "2" means range from -1 to 1
+    int idist = 2; // result type. "2" means range from -1 to 1
     int seed[] = { 0, 1, 7, 11 }; // random seed
-    int size = SWARM_SIZE * 2;
+    int size = SWARM_SIZE * 4;
     slarnv_(&idist, seed, &size, Swarm.pos); // LAPACK random vector function
 
-    idist = 2;
-    slarnv_(&idist, seed, &size, Swarm.speed);
-
-
-    cblas_sscal(SWARM_SIZE, WIDTH, Swarm.pos, 2); // BLAS multiply vector by scalar
-    cblas_sscal(SWARM_SIZE, HEIGHT, Swarm.pos + 1, 2);
-
-    cblas_sscal(SWARM_SIZE * 2, SPEED_RATIO, Swarm.speed, 1); 
+    cblas_sscal(SWARM_SIZE * 2, SPEED_RATIO, Swarm.speed, 1); // BLAS multiply vector by scalar
 }
 
 int main(void) {
@@ -92,7 +85,6 @@ int main(void) {
     GLuint particles = createProgram(vertex, fragment);
 
     GLint positionAttr = glGetAttribLocation(particles, "pos");
-    GLint windowUniform = glGetUniformLocation(particles, "window");
 
     GLuint glBuffers[2];
     glGenBuffers(sizeof(glBuffers) / sizeof(glBuffers[0]), glBuffers);
@@ -147,12 +139,12 @@ int main(void) {
 
 
 
-    float mousePosition[2] = { -1, -1 };
+    float mousePosition[2] = { -2, -2 };
     
     clSetKernelArg(kernel, 0, sizeof(dataPos), &dataPos);
     clSetKernelArg(kernel, 1, sizeof(dataSpeed), &dataSpeed);
     clSetKernelArg(kernel, 2, sizeof(swarmSize), &swarmSize);
-    clSetKernelArg(kernel, 3, sizeof(windowSize), &windowSize);
+    clSetKernelArg(kernel, 3, sizeof(ratio), &ratio);
     clSetKernelArg(kernel, 4, sizeof(clickRadius), &clickRadius);
     clSetKernelArg(kernel, 5, sizeof(mousePosition), &mousePosition);
 
@@ -175,23 +167,23 @@ int main(void) {
 
                 case SDL_MOUSEBUTTONDOWN:
                     isMouseDown = 1;
-                    mousePosition[0] = e.button.x;
-                    mousePosition[1] = e.button.y;
+                    mousePosition[0] = e.button.x * 2 / (float)WIDTH - 1;
+                    mousePosition[1] = e.button.y * -2 / (float)HEIGHT + 1;
 
                     clSetKernelArg(kernel, 5, sizeof(mousePosition), &mousePosition);
                     break;
 
                 case SDL_MOUSEBUTTONUP:
                     isMouseDown = 0;
-                    mousePosition[0] = -1;
+                    mousePosition[0] = -2;
                     clSetKernelArg(kernel, 5, sizeof(float), &mousePosition);
                     break;
 
                 case SDL_MOUSEMOTION:
                     if(!isMouseDown) break;
 
-                    mousePosition[0] = e.button.x;
-                    mousePosition[1] = e.button.y;
+                    mousePosition[0] = e.button.x * 2 / (float)WIDTH - 1;
+                    mousePosition[1] = e.button.y * -2 / (float)HEIGHT + 1;
 
                     clSetKernelArg(kernel, 5, sizeof(mousePosition), &mousePosition);
                     break;
@@ -207,8 +199,6 @@ int main(void) {
         glClear(GL_COLOR_BUFFER_BIT);
 
         glUseProgram(particles);
-
-        glUniform2f(windowUniform, WIDTH, HEIGHT);
         
         glBindBuffer(GL_ARRAY_BUFFER, glBuffers[0]);
         glVertexAttribPointer(
