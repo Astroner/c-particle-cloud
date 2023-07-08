@@ -4,7 +4,10 @@
 
 #include <SDL2/SDL.h>
 #include <Accelerate/Accelerate.h>
+#include <OpenGL/CGLDevice.h>
+#include <OpenGL/CGLCurrent.h>
 #include <OpenCL/opencl.h>
+#include <OpenCL/cl_gl_ext.h>
 #include <OpenGL/gl.h>
 
 #include "main.h"
@@ -35,9 +38,6 @@ struct Swarm {
     float dx[SWARM_SIZE];
     float dy[SWARM_SIZE];
 } Swarm;
-
-float outputX[SWARM_SIZE];
-float outputY[SWARM_SIZE];
 
 #define XSTR(a) STR(a)
 #define STR(a) #a
@@ -71,6 +71,8 @@ void initSwarm() {
 GLushort elements[SWARM_SIZE];
 
 int main(void) {
+
+// SDL/OpenGL init
     if(SDL_Init(SDL_INIT_VIDEO) < 0) {
         printf("Failed to init SDL\n");
 
@@ -79,16 +81,62 @@ int main(void) {
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
     SDL_GL_SetAttribute(SDL_GL_ACCELERATED_VISUAL, 1);
 
+    SDL_Window* window = SDL_CreateWindow(
+        "The Swarm",
+        SDL_WINDOWPOS_CENTERED,
+        SDL_WINDOWPOS_CENTERED,
+        WIDTH,
+        HEIGHT,
+        SDL_WINDOW_OPENGL
+    );    
 
-    char* src = readFile("shader.cl", NULL);
+    SDL_GLContext glCtx = SDL_GL_CreateContext(window);
 
-    cl_device_id device = getDevice();
+
+    GLuint vertex = createShader(GL_VERTEX_SHADER, "vertex.glsl");
+    GLuint fragment = createShader(GL_FRAGMENT_SHADER, "fragment.glsl");
+    GLuint particles = createProgram(vertex, fragment);
+
+    GLint positionXAttr = glGetAttribLocation(particles, "posX");
+    GLint positionYAttr = glGetAttribLocation(particles, "posY");
+
+    GLuint glBuffers[3];
+    glGenBuffers(sizeof(glBuffers) / sizeof(glBuffers[0]), glBuffers);
+
+    glBindBuffer(GL_ARRAY_BUFFER, glBuffers[0]);
+    glBufferData(GL_ARRAY_BUFFER, SWARM_SIZE * sizeof(GLfloat), NULL, GL_DYNAMIC_DRAW);
+
+    glBindBuffer(GL_ARRAY_BUFFER, glBuffers[1]);
+    glBufferData(GL_ARRAY_BUFFER, SWARM_SIZE * sizeof(GLfloat), NULL, GL_DYNAMIC_DRAW);
+
+    for(size_t i = 0; i < SWARM_SIZE; i++)
+        elements[i] = (GLushort)i;
+
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, glBuffers[2]);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(elements), elements, GL_STATIC_DRAW);
+
+
+// OpenCL init
+    CGLContextObj cgl_current_context = CGLGetCurrentContext();
+    CGLShareGroupObj cgl_share_group = CGLGetShareGroup(cgl_current_context);
+
+    cl_context_properties properties[] = {
+        CL_CONTEXT_PROPERTY_USE_CGL_SHAREGROUP_APPLE,
+        (cl_context_properties) cgl_share_group,
+        0
+    };
+
+    char* src = readFile("compute.cl", NULL);
 
     CHECK_ASSIGN(
         "Context creation",
         cl_context, ctx, 
-        clCreateContext(NULL, 1, &device, NULL, NULL, NULL)
+        clCreateContext(properties, 0, NULL, NULL, NULL, NULL)
     );
+
+    cl_device_id device;
+    clGetContextInfo(ctx, CL_CONTEXT_DEVICES, sizeof(device), &device, NULL);
+
 
     CHECK_ASSIGN(
         "Program creation",
@@ -118,13 +166,13 @@ int main(void) {
     CHECK_ASSIGN(
         "X buffer creation",
         cl_mem, dataX,
-        clCreateBuffer(ctx, CL_MEM_READ_WRITE, SWARM_SIZE * sizeof(float), NULL, NULL)
+        clCreateFromGLBuffer(ctx, CL_MEM_READ_WRITE, glBuffers[0], NULL)
     );
 
     CHECK_ASSIGN(
         "Y buffer creation",
         cl_mem, dataY,
-        clCreateBuffer(ctx, CL_MEM_READ_WRITE, SWARM_SIZE * sizeof(float), NULL, NULL)
+        clCreateFromGLBuffer(ctx, CL_MEM_READ_WRITE, glBuffers[1], NULL)
     );
 
     CHECK_ASSIGN(
@@ -142,6 +190,16 @@ int main(void) {
     initSwarm();
 
     CHECK_OPERATION(
+        "Enqueue X buffer acquire",
+        clEnqueueAcquireGLObjects(queue, 1, &dataX, 0, NULL, NULL)
+    );
+
+    CHECK_OPERATION(
+        "Enqueue Y buffer acquire",
+        clEnqueueAcquireGLObjects(queue, 1, &dataY, 0, NULL, NULL)
+    );
+
+    CHECK_OPERATION(
         "Enqueue X buffer init",
         clEnqueueWriteBuffer(queue, dataX, CL_FALSE, 0, SWARM_SIZE * sizeof(float), Swarm.x, 0, NULL, NULL)
     );
@@ -149,6 +207,16 @@ int main(void) {
     CHECK_OPERATION(
         "Enqueue Y buffer init",
         clEnqueueWriteBuffer(queue, dataY, CL_FALSE, 0, SWARM_SIZE * sizeof(float), Swarm.y, 0, NULL, NULL)
+    );
+
+    CHECK_OPERATION(
+        "Enqueue X buffer acquire",
+        clEnqueueReleaseGLObjects(queue, 1, &dataX, 0, NULL, NULL)
+    );
+
+    CHECK_OPERATION(
+        "Enqueue Y buffer acquire",
+        clEnqueueReleaseGLObjects(queue, 1, &dataY, 0, NULL, NULL)
     );
 
     CHECK_OPERATION(
@@ -178,32 +246,6 @@ int main(void) {
     CHECK_OPERATION("set mouseY arg",       clSetKernelArg(kernel, 9, sizeof(mouseInitPos), &mouseInitPos));
 
 
-    SDL_Window* window = SDL_CreateWindow(
-        "The Swarm",
-        SDL_WINDOWPOS_CENTERED,
-        SDL_WINDOWPOS_CENTERED,
-        WIDTH,
-        HEIGHT,
-        SDL_WINDOW_OPENGL
-    );
-
-    SDL_GLContext glCtx = SDL_GL_CreateContext(window);
-
-    GLuint vertex = createShader(GL_VERTEX_SHADER, "vertex.glsl");
-    GLuint fragment = createShader(GL_FRAGMENT_SHADER, "fragment.glsl");
-    GLuint particles = createProgram(vertex, fragment);
-
-    GLint positionXAttr = glGetAttribLocation(particles, "posX");
-    GLint positionYAttr = glGetAttribLocation(particles, "posY");
-
-    GLuint glBuffers[3];
-    glGenBuffers(sizeof(glBuffers) / sizeof(glBuffers[0]), glBuffers);
-
-    for(size_t i = 0; i < SWARM_SIZE; i++)
-        elements[i] = (GLushort)i;
-
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, glBuffers[2]);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(elements), elements, GL_STATIC_DRAW);
 
 
     int isMouseDown = 0;
@@ -237,19 +279,28 @@ int main(void) {
         }
 
         CHECK_OPERATION(
+            "Enqueue X buffer acquire in loop",
+            clEnqueueAcquireGLObjects(queue, 1, &dataX, 0, NULL, NULL)
+        );
+
+        CHECK_OPERATION(
+            "Enqueue Y buffer acquire in loop",
+            clEnqueueAcquireGLObjects(queue, 1, &dataY, 0, NULL, NULL)
+        );
+
+        CHECK_OPERATION(
             "enqueue tick",
             clEnqueueNDRangeKernel(queue, kernel, 1, NULL, &global, NULL, 0, NULL, NULL)
         );
 
-
         CHECK_OPERATION(
-            "enqueue read X data",
-            clEnqueueReadBuffer(queue, dataX, CL_FALSE, 0, sizeof(outputX), outputX, 0, NULL, NULL)
+            "Enqueue X buffer acquire",
+            clEnqueueReleaseGLObjects(queue, 1, &dataX, 0, NULL, NULL)
         );
 
         CHECK_OPERATION(
-            "enqueue read Y data",
-            clEnqueueReadBuffer(queue, dataY, CL_FALSE, 0, sizeof(outputY), outputY, 0, NULL, NULL)
+            "Enqueue Y buffer acquire",
+            clEnqueueReleaseGLObjects(queue, 1, &dataY, 0, NULL, NULL)
         );
 
         clFinish(queue);
@@ -261,7 +312,6 @@ int main(void) {
 
         
         glBindBuffer(GL_ARRAY_BUFFER, glBuffers[0]);
-        glBufferData(GL_ARRAY_BUFFER, sizeof(outputX), outputX, GL_DYNAMIC_DRAW);
         glVertexAttribPointer(
             positionXAttr,
             1,
@@ -274,7 +324,6 @@ int main(void) {
 
 
         glBindBuffer(GL_ARRAY_BUFFER, glBuffers[1]);
-        glBufferData(GL_ARRAY_BUFFER, sizeof(outputY), outputY, GL_DYNAMIC_DRAW);
         glVertexAttribPointer(
             positionYAttr,
             1,
@@ -298,24 +347,6 @@ int main(void) {
         glDisableVertexAttribArray(positionYAttr);
 
         SDL_GL_SwapWindow(window);
-
-        // SDL_SetRenderDrawColor(renderer, 0, 0, 0, 250);
-        // SDL_RenderClear(renderer);
-
-        // SDL_FRect rect = {
-        //     .h = UNIT_SIZE,
-        //     .w = UNIT_SIZE
-        // };
-
-        // for(size_t i = 0; i < SWARM_SIZE; i++) {
-        //     rect.x = outputX[i];
-        //     rect.y = outputY[i];
-
-        //     SDL_RenderCopyF(renderer, texture, NULL, &rect);
-        // }
-
-        // SDL_RenderPresent(renderer);
-
 
         Uint64 end = SDL_GetPerformanceCounter();
 
@@ -341,7 +372,6 @@ int main(void) {
 
 
     SDL_GL_DeleteContext(glCtx);
-    // SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
     SDL_Quit();
     return 0;
