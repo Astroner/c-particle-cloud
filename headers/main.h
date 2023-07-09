@@ -1,5 +1,4 @@
 #include <stddef.h>
-#include <OpenCL/opencl.h>
 #include <OpenGL/gl.h>
 
 #if !defined(MAIN_H)
