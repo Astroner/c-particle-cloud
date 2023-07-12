@@ -26,7 +26,6 @@
 float clickRadius = (float)CLICK_RADIUS / (float)WIDTH;
 
 int swarmSize = SWARM_SIZE;
-GLushort elements[SWARM_SIZE];
 float ratio = (float)WIDTH / (float)HEIGHT;
 const size_t global = SWARM_SIZE;
 
@@ -88,17 +87,11 @@ int main(void) {
 
     GLint positionAttr = glGetAttribLocation(particles, "pos");
 
-    GLuint glBuffers[2];
-    glGenBuffers(sizeof(glBuffers) / sizeof(glBuffers[0]), glBuffers);
+    GLuint vertices;
+    glGenBuffers(1, &vertices);
 
-    glBindBuffer(GL_ARRAY_BUFFER, glBuffers[0]);
+    glBindBuffer(GL_ARRAY_BUFFER, vertices);
     glBufferData(GL_ARRAY_BUFFER, SWARM_SIZE * sizeof(GLfloat) * 2, NULL, GL_DYNAMIC_DRAW);
-
-    for(size_t i = 0; i < SWARM_SIZE; i++)
-        elements[i] = (GLushort)i;
-
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, glBuffers[1]);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(elements), elements, GL_STATIC_DRAW);
 
 
 // OpenCL init
@@ -127,7 +120,7 @@ int main(void) {
 
     cl_kernel kernel = clCreateKernel(program, "compute", NULL);
 
-    cl_mem dataPos = clCreateFromGLBuffer(ctx, CL_MEM_READ_WRITE, glBuffers[0], NULL);
+    cl_mem dataPos = clCreateFromGLBuffer(ctx, CL_MEM_READ_WRITE, vertices, NULL);
     cl_mem dataSpeed = clCreateBuffer(ctx, CL_MEM_READ_WRITE, SWARM_SIZE * sizeof(float) * 2, NULL, NULL);
 
     initSwarm();
@@ -202,7 +195,7 @@ int main(void) {
 
         glUseProgram(particles);
         
-        glBindBuffer(GL_ARRAY_BUFFER, glBuffers[0]);
+        glBindBuffer(GL_ARRAY_BUFFER, vertices);
         glVertexAttribPointer(
             positionAttr,
             2,
@@ -213,13 +206,10 @@ int main(void) {
         );
         glEnableVertexAttribArray(positionAttr);
 
-
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, glBuffers[1]);
-        glDrawElements(
+        glDrawArrays(
             GL_POINTS,
-            SWARM_SIZE,
-            GL_UNSIGNED_SHORT, 
-            NULL
+            0,
+            SWARM_SIZE
         );
 
         glDisableVertexAttribArray(positionAttr);
@@ -243,7 +233,7 @@ int main(void) {
     clReleaseContext(ctx);
 
 
-    glDeleteBuffers(sizeof(glBuffers) / sizeof(glBuffers[0]), glBuffers);
+    glDeleteBuffers(1, &vertices);
     glDeleteProgram(particles);
 
 
