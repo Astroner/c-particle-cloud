@@ -83,6 +83,8 @@ int main(void) {
     GLuint vertex = createShader(GL_VERTEX_SHADER, "vertex.glsl");
     GLuint fragment = createShader(GL_FRAGMENT_SHADER, "fragment.glsl");
     GLuint particles = createProgram(vertex, fragment);
+    glDeleteShader(vertex);
+    glDeleteShader(fragment);
 
     GLint positionAttr = glGetAttribLocation(particles, "pos");
 
@@ -242,7 +244,7 @@ int main(void) {
 
 
     glDeleteBuffers(sizeof(glBuffers) / sizeof(glBuffers[0]), glBuffers);
-
+    glDeleteProgram(particles);
 
 
     SDL_GL_DeleteContext(glCtx);
